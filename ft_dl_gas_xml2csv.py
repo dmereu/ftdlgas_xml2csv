@@ -14,6 +14,46 @@ import datetime
 import time
 
 
+# Costanti globali
+CSV_FIELDNAMES = [
+    'nome_file', 'data_creazione', 'numero_sequenza',
+    'mittente_ragione_sociale', 'mittente_partita_iva',
+    'numero_fattura', 'data_emissione',
+    'codice_pdr', 'remi_pool',
+    'data_inizio', 'data_fine', 'tipo_movimento',
+    'componente_tariffaria', 'quota', 'scaglione',
+    'quantita', 'imponibile'
+]
+
+EMPTY_IMPORT_FIELDS = {
+    'data_inizio': '', 'data_fine': '', 'tipo_movimento': '',
+    'componente_tariffaria': '', 'quota': '', 'scaglione': '',
+    'quantita': '', 'imponibile': ''
+}
+
+EMPTY_PDR_FIELDS = {
+    'codice_pdr': '', 'remi_pool': '', **EMPTY_IMPORT_FIELDS
+}
+
+
+def get_current_timestamp(format_type='log'):
+    """Genera timestamp nel formato richiesto"""
+    now = datetime.datetime.now()
+    if format_type == 'log':
+        return now.strftime('%Y-%m-%d %H:%M:%S')
+    elif format_type == 'filename':
+        return now.strftime('%Y%m%d_%H%M%S')
+    elif format_type == 'consolidated':
+        return now.strftime('%Y%m%d-%H%M%S')
+    return now
+
+
+def is_valid_xml_file(file_path):
+    """Verifica se il file è un XML valido"""
+    return (file_path and file_path.lower().endswith('.xml') and
+            os.path.isfile(file_path))
+
+
 def get_text_safe(element, tag_name):
     if element is None:
         return ''
@@ -62,26 +102,18 @@ def extract_data(root, xml_filename):
                     rows.append(row)
             else:
                 row = {**common_data, **pdr_data}
-                row.update({
-                    'data_inizio': '', 'data_fine': '', 'tipo_movimento': '',
-                    'componente_tariffaria': '', 'quota': '', 'scaglione': '',
-                    'quantita': '', 'imponibile': ''
-                })
+                row.update(EMPTY_IMPORT_FIELDS)
                 rows.append(row)
     else:
-        common_data.update({
-            'codice_pdr': '', 'remi_pool': '', 'data_inizio': '', 'data_fine': '',
-            'tipo_movimento': '', 'componente_tariffaria': '', 'quota': '',
-            'scaglione': '', 'quantita': '', 'imponibile': ''
-        })
+        common_data.update(EMPTY_PDR_FIELDS)
         rows.append(common_data)
     
     return rows
 
 
+
 def create_log_filename():
-    timestamp = datetime.datetime.now()
-    return f"xml2csv_{timestamp.strftime('%Y%m%d_%H%M%S')}.log.csv"
+    return f"xml2csv_{get_current_timestamp('filename')}.log.csv"
 
 
 def write_log_entry(log_file_path, file_xml, file_csv, job_ts,
@@ -104,40 +136,66 @@ def write_log_entry(log_file_path, file_xml, file_csv, job_ts,
             'confirmation': confirmation,
             'notes': notes
         })
-def convert_xml_to_csv(xml_file_path, output_folder, log_file_path):
+
+
+def process_single_xml_file(xml_file, csv_filename, log_file_path,
+                            current_num=None, total_num=None):
+    """Processa un singolo file XML e restituisce le righe CSV"""
+    xml_filename = os.path.basename(xml_file)
+    file_start_time = time.time()
+    file_job_ts = get_current_timestamp('log')
+    
+    try:
+        if current_num and total_num:
+            print(f"Processando {current_num}/{total_num}: {xml_filename}")
+        else:
+            print(f"Processando: {xml_filename}")
+            
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        csv_rows = extract_data(root, xml_filename)
+        
+        file_conversion_time = time.time() - file_start_time
+        write_log_entry(log_file_path, xml_filename, csv_filename,
+                        file_job_ts, file_conversion_time, 1)
+        
+        return csv_rows, len(csv_rows)
+        
+    except Exception as e:
+        file_conversion_time = time.time() - file_start_time
+        error_msg = f"Errore in {xml_filename}: {str(e)}"
+        print(f"ERRORE: {error_msg}")
+        write_log_entry(log_file_path, xml_filename, csv_filename,
+                        file_job_ts, file_conversion_time, 0, error_msg)
+        return [], 0
+
+
+def convert_xml_to_csv(xml_file_path, output_folder, log_file_path,
+                       suppress_print=False):
     xml_filename = os.path.basename(xml_file_path)
     csv_filename = xml_filename.replace('.xml', '.csv')
     csv_path = os.path.join(output_folder, csv_filename)
     
     job_start_time = time.time()
-    job_ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    job_ts = get_current_timestamp('log')
     
     try:
-        print(f"Convertendo: {xml_filename}")
+        if not suppress_print:
+            print(f"Convertendo: {xml_filename}")
         
         tree = ET.parse(xml_file_path)
         root = tree.getroot()
-        
         csv_rows = extract_data(root, xml_filename)
         
-        fieldnames = [
-            'nome_file', 'data_creazione', 'numero_sequenza',
-            'mittente_ragione_sociale', 'mittente_partita_iva',
-            'numero_fattura', 'data_emissione',
-            'codice_pdr', 'remi_pool',
-            'data_inizio', 'data_fine', 'tipo_movimento',
-            'componente_tariffaria', 'quota', 'scaglione',
-            'quantita', 'imponibile'
-        ]
-        
         with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames,
+            writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES,
                                     delimiter=';', quoting=csv.QUOTE_NONE)
             writer.writeheader()
             writer.writerows(csv_rows)
         
         conversion_time = time.time() - job_start_time
-        print(f"Creato: {csv_filename} ({conversion_time:.3f}s)")
+        if not suppress_print:
+            print(f"Creato: {csv_filename} ({conversion_time:.3f}s)")
         write_log_entry(log_file_path, xml_filename, csv_filename,
                         job_ts, conversion_time, 1)
         
@@ -149,7 +207,48 @@ def convert_xml_to_csv(xml_file_path, output_folder, log_file_path):
                         job_ts, conversion_time, 0, error_msg)
 
 
-def process_input(input_path, output_folder):
+def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path):
+    """Converte tutti file XML in un unico CSV con una sola intestazione"""
+    
+    csv_filename = f"xml_multi_{get_current_timestamp('consolidated')}.csv"
+    csv_path = os.path.join(output_folder, csv_filename)
+    
+    job_start_time = time.time()
+    total_rows = 0
+    processed_files = 0
+    
+    try:
+        with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES,
+                                    delimiter=';', quoting=csv.QUOTE_NONE)
+            writer.writeheader()
+            
+            for i, xml_file in enumerate(xml_files, 1):
+                csv_rows, row_count = process_single_xml_file(
+                    xml_file, csv_filename, log_file_path, i, len(xml_files))
+                
+                if csv_rows:  # Solo se il file è stato processato con successo
+                    writer.writerows(csv_rows)
+                    total_rows += row_count
+                    processed_files += 1
+        
+        conversion_time = time.time() - job_start_time
+        
+        print(f"File consolidato creato: {csv_filename}")
+        print(f"File processati: {processed_files}/{len(xml_files)}")
+        print(f"Righe totali: {total_rows}")
+        print(f"Tempo totale: {conversion_time:.3f}s")
+        
+    except Exception as e:
+        conversion_time = time.time() - job_start_time
+        error_msg = f"Errore nella creazione del file consolidato: {str(e)}"
+        print(f"ERRORE: {error_msg}")
+        job_ts = get_current_timestamp('log')
+        write_log_entry(log_file_path, f"{len(xml_files)}_files", "",
+                        job_ts, conversion_time, 0, error_msg)
+
+
+def process_input(input_path, output_folder, onefile=False):
     Path(output_folder).mkdir(parents=True, exist_ok=True)
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -159,10 +258,15 @@ def process_input(input_path, output_folder):
     log_file_path = os.path.join(log_folder, create_log_filename())
     
     if os.path.isfile(input_path):
-        if not input_path.lower().endswith('.xml'):
-            print(f"ERRORE: {input_path} non è un file XML")
+        if not is_valid_xml_file(input_path):
+            print(f"ERRORE: {input_path} non è un file XML valido")
             return
-        convert_xml_to_csv(input_path, output_folder, log_file_path)
+        
+        if onefile:
+            convert_xml_to_csv_onefile([input_path], output_folder,
+                                       log_file_path)
+        else:
+            convert_xml_to_csv(input_path, output_folder, log_file_path)
         
     elif os.path.isdir(input_path):
         xml_files = glob.glob(os.path.join(input_path, "*.xml"))
@@ -173,8 +277,14 @@ def process_input(input_path, output_folder):
         
         print(f"Trovati {len(xml_files)} file XML da convertire")
         
-        for xml_file in xml_files:
-            convert_xml_to_csv(xml_file, output_folder, log_file_path)
+        if onefile:
+            convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path)
+        else:
+            for i, xml_file in enumerate(xml_files, 1):
+                print(f"Convertendo {i}/{len(xml_files)}: "
+                      f"{os.path.basename(xml_file)}")
+                convert_xml_to_csv(xml_file, output_folder, log_file_path,
+                                   suppress_print=True)
     else:
         print(f"ERRORE: Il percorso {input_path} non esiste")
     
@@ -190,6 +300,7 @@ Esempi:
   python xml_to_csv_converter.py file.xml -o output/          # Con output
   python xml_to_csv_converter.py -f cartella_xml/             # Cartella
   python xml_to_csv_converter.py -f cartella_xml/ -o output/  # Con output
+  python xml_to_csv_converter.py -f cartella_xml/ -1          # Un solo file
         """
     )
     
@@ -213,6 +324,12 @@ Esempi:
         help='Cartella di output (default: stessa cartella dell\'input)'
     )
     
+    parser.add_argument(
+        '-1', '--onefile',
+        action='store_true',
+        help='Crea un unico file CSV consolidato con tutti i dati'
+    )
+    
     if len(sys.argv) == 1:
         parser.print_help()
         return
@@ -221,11 +338,9 @@ Esempi:
     
     if args.file_xml:
         input_path = args.file_xml
-        if not input_path.lower().endswith('.xml'):
-            print(f"ERRORE: {input_path} non è un file XML")
-            return
-        if not os.path.isfile(input_path):
-            print(f"ERRORE: Il file {input_path} non esiste")
+        if not is_valid_xml_file(input_path):
+            print(f"ERRORE: {input_path} non è un file XML valido "
+                  f"o non esiste")
             return
     elif args.folder_path:
         input_path = args.folder_path
@@ -244,7 +359,7 @@ Esempi:
         else:
             output_folder = input_path
     
-    process_input(input_path, output_folder)
+    process_input(input_path, output_folder, args.onefile)
     print("Conversione completata!")
 
 
