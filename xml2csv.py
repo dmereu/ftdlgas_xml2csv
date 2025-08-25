@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Converte file XML delle fatture gas in formato CSV usando solo librerie standard.
-Versione: 0.1.2
+Versione: 0.1.3
 Build: 20250825-1234
 """
 
@@ -36,6 +36,33 @@ EMPTY_IMPORT_FIELDS = {
 EMPTY_PDR_FIELDS = {
     'codice_pdr': '', 'remi_pool': '', **EMPTY_IMPORT_FIELDS
 }
+
+
+def filter_csv_rows(csv_rows, grep_filter):
+    """Filtra le righe CSV in base ai criteri specificati"""
+    if not grep_filter:
+        return csv_rows
+    
+    # Divide i filtri per virgola (logica OR)
+    filters = [f.strip() for f in grep_filter.split(',') if f.strip()]
+    
+    if not filters:
+        return csv_rows
+    
+    filtered_rows = []
+    
+    for row in csv_rows:
+        # Combina tutti i valori della riga in una stringa per la ricerca
+        row_text = ' '.join(str(value) for value in row.values()).lower()
+        
+        # Applica logica OR: se almeno un filtro matcha, includi la riga
+        for filter_term in filters:
+            filter_term = filter_term.lower()
+            if filter_term in row_text:
+                filtered_rows.append(row)
+                break  # Match trovato, passa alla riga successiva
+    
+    return filtered_rows
 
 
 def get_current_timestamp(format_type='log'):
@@ -141,7 +168,8 @@ def write_log_entry(log_file_path, file_xml, file_csv, job_ts,
 
 
 def process_single_xml_file(xml_file, csv_filename, log_file_path,
-                            current_num=None, total_num=None):
+                            current_num=None, total_num=None,
+                            grep_filter=None):
     """Processa un singolo file XML e restituisce le righe CSV"""
     xml_filename = os.path.basename(xml_file)
     file_start_time = time.time()
@@ -156,6 +184,13 @@ def process_single_xml_file(xml_file, csv_filename, log_file_path,
         tree = ET.parse(xml_file)
         root = tree.getroot()
         csv_rows = extract_data(root, xml_filename)
+        
+        # Applica filtro se specificato
+        if grep_filter:
+            original_count = len(csv_rows)
+            csv_rows = filter_csv_rows(csv_rows, grep_filter)
+            if current_num and total_num:
+                print(f"  Filtrate: {len(csv_rows)}/{original_count} righe")
         
         file_conversion_time = time.time() - file_start_time
         write_log_entry(log_file_path, xml_filename, csv_filename,
@@ -173,7 +208,7 @@ def process_single_xml_file(xml_file, csv_filename, log_file_path,
 
 
 def convert_xml_to_csv(xml_file_path, output_folder, log_file_path,
-                       suppress_print=False):
+                       suppress_print=False, grep_filter=None):
     xml_filename = os.path.basename(xml_file_path)
     csv_filename = xml_filename.replace('.xml', '.csv')
     csv_path = os.path.join(output_folder, csv_filename)
@@ -188,6 +223,13 @@ def convert_xml_to_csv(xml_file_path, output_folder, log_file_path,
         tree = ET.parse(xml_file_path)
         root = tree.getroot()
         csv_rows = extract_data(root, xml_filename)
+        
+        # Applica filtro se specificato
+        if grep_filter:
+            original_count = len(csv_rows)
+            csv_rows = filter_csv_rows(csv_rows, grep_filter)
+            if not suppress_print:
+                print(f"  Filtrate: {len(csv_rows)}/{original_count} righe")
         
         with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES,
@@ -210,7 +252,7 @@ def convert_xml_to_csv(xml_file_path, output_folder, log_file_path,
 
 
 def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
-                               split_rows=None):
+                               split_rows=None, grep_filter=None):
     """Converte tutti file XML in un unico CSV con una sola intestazione"""
     
     base_filename = f"xml_multi_{get_current_timestamp('consolidated')}"
@@ -219,18 +261,21 @@ def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
     total_rows = 0
     processed_files = 0
     all_csv_rows = []
+    total_filtered_rows = 0
     
     try:
         # Prima raccogliamo tutti i dati
         for i, xml_file in enumerate(xml_files, 1):
             csv_rows, row_count = process_single_xml_file(
                 xml_file, f"{base_filename}.csv", log_file_path,
-                i, len(xml_files))
+                i, len(xml_files), grep_filter)
             
             if csv_rows:  # Solo se il file è stato processato con successo
                 all_csv_rows.extend(csv_rows)
                 total_rows += row_count
                 processed_files += 1
+                if grep_filter:
+                    total_filtered_rows += row_count
         
         # Ora scriviamo i file
         if split_rows and total_rows > split_rows:
@@ -292,7 +337,8 @@ def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
                         job_ts, conversion_time, 0, error_msg)
 
 
-def process_input(input_path, output_folder, onefile=False, split_rows=None):
+def process_input(input_path, output_folder, onefile=False, split_rows=None,
+                  grep_filter=None):
     Path(output_folder).mkdir(parents=True, exist_ok=True)
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -301,6 +347,9 @@ def process_input(input_path, output_folder, onefile=False, split_rows=None):
     
     log_file_path = os.path.join(log_folder, create_log_filename())
     
+    if grep_filter:
+        print(f"Filtro attivo: '{grep_filter}'")
+    
     if os.path.isfile(input_path):
         if not is_valid_xml_file(input_path):
             print(f"ERRORE: {input_path} non è un file XML valido")
@@ -308,9 +357,10 @@ def process_input(input_path, output_folder, onefile=False, split_rows=None):
         
         if onefile:
             convert_xml_to_csv_onefile([input_path], output_folder,
-                                       log_file_path, split_rows)
+                                       log_file_path, split_rows, grep_filter)
         else:
-            convert_xml_to_csv(input_path, output_folder, log_file_path)
+            convert_xml_to_csv(input_path, output_folder, log_file_path,
+                               suppress_print=False, grep_filter=grep_filter)
         
     elif os.path.isdir(input_path):
         xml_files = glob.glob(os.path.join(input_path, "*.xml"))
@@ -323,13 +373,14 @@ def process_input(input_path, output_folder, onefile=False, split_rows=None):
         
         if onefile:
             convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
-                                       split_rows)
+                                       split_rows, grep_filter)
         else:
             for i, xml_file in enumerate(xml_files, 1):
                 print(f"Convertendo {i}/{len(xml_files)}: "
                       f"{os.path.basename(xml_file)}")
                 convert_xml_to_csv(xml_file, output_folder, log_file_path,
-                                   suppress_print=True)
+                                   suppress_print=True,
+                                   grep_filter=grep_filter)
     else:
         print(f"ERRORE: Il percorso {input_path} non esiste")
     
@@ -347,6 +398,8 @@ Esempi:
   python xml_to_csv_converter.py -f cartella_xml/ -o output/  # Con output
   python xml_to_csv_converter.py -f cartella_xml/ -1          # Un solo file
   python xml_to_csv_converter.py -f cartella_xml/ -1 -s 100000   # Split
+  python xml_to_csv_converter.py -f cartella_xml/ -g "TAU1"   # Filtra TAU1
+  python xml_to_csv_converter.py -f cartella_xml/ -g "TAU1,TAU2" # OR logic
         """
     )
     
@@ -383,6 +436,14 @@ Esempi:
         metavar='RIGHE',
         help='Divide il file consolidato in chunk di RIGHE righe '
              '(default: 500000, usa solo con --onefile)'
+    )
+    
+    parser.add_argument(
+        '-g', '--grep',
+        dest='grep_filter',
+        metavar='FILTRO',
+        help='Filtra le righe che contengono FILTRO (case-insensitive). '
+             'Usa virgole per filtri multipli (OR): "testo1,testo2"'
     )
     
     if len(sys.argv) == 1:
@@ -424,7 +485,8 @@ Esempi:
         else:
             output_folder = input_path
     
-    process_input(input_path, output_folder, args.onefile, args.split_rows)
+    process_input(input_path, output_folder, args.onefile, args.split_rows,
+                  args.grep_filter)
     print("Conversione completata!")
 
 
