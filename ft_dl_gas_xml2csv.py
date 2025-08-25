@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 Converte file XML delle fatture gas in formato CSV usando solo librerie standard.
+Versione: 0.1.2
+Build: 20250825-1234
 """
 
 import xml.etree.ElementTree as ET
@@ -207,34 +209,76 @@ def convert_xml_to_csv(xml_file_path, output_folder, log_file_path,
                         job_ts, conversion_time, 0, error_msg)
 
 
-def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path):
+def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
+                               split_rows=None):
     """Converte tutti file XML in un unico CSV con una sola intestazione"""
     
-    csv_filename = f"xml_multi_{get_current_timestamp('consolidated')}.csv"
-    csv_path = os.path.join(output_folder, csv_filename)
+    base_filename = f"xml_multi_{get_current_timestamp('consolidated')}"
     
     job_start_time = time.time()
     total_rows = 0
     processed_files = 0
+    all_csv_rows = []
     
     try:
-        with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES,
-                                    delimiter=';', quoting=csv.QUOTE_NONE)
-            writer.writeheader()
+        # Prima raccogliamo tutti i dati
+        for i, xml_file in enumerate(xml_files, 1):
+            csv_rows, row_count = process_single_xml_file(
+                xml_file, f"{base_filename}.csv", log_file_path,
+                i, len(xml_files))
             
-            for i, xml_file in enumerate(xml_files, 1):
-                csv_rows, row_count = process_single_xml_file(
-                    xml_file, csv_filename, log_file_path, i, len(xml_files))
+            if csv_rows:  # Solo se il file è stato processato con successo
+                all_csv_rows.extend(csv_rows)
+                total_rows += row_count
+                processed_files += 1
+        
+        # Ora scriviamo i file
+        if split_rows and total_rows > split_rows:
+            # Modalità split: crea più file
+            file_count = 0
+            row_start = 0
+            
+            while row_start < len(all_csv_rows):
+                file_count += 1
+                row_end = min(row_start + split_rows, len(all_csv_rows))
+                chunk_rows = all_csv_rows[row_start:row_end]
                 
-                if csv_rows:  # Solo se il file è stato processato con successo
-                    writer.writerows(csv_rows)
-                    total_rows += row_count
-                    processed_files += 1
+                csv_filename = f"{base_filename}_{file_count:03d}.csv"
+                csv_path = os.path.join(output_folder, csv_filename)
+                
+                with open(csv_path, 'w', newline='',
+                          encoding='utf-8-sig') as csvfile:
+                    writer = csv.DictWriter(csvfile,
+                                            fieldnames=CSV_FIELDNAMES,
+                                            delimiter=';',
+                                            quoting=csv.QUOTE_NONE)
+                    writer.writeheader()
+                    writer.writerows(chunk_rows)
+                
+                print(f"Creato file {file_count}: {csv_filename} "
+                      f"({len(chunk_rows)} righe)")
+                
+                row_start = row_end
+            
+            print(f"File diviso in {file_count} parti")
+            
+        else:
+            # Modalità normale: un solo file
+            csv_filename = f"{base_filename}.csv"
+            csv_path = os.path.join(output_folder, csv_filename)
+            
+            with open(csv_path, 'w', newline='',
+                      encoding='utf-8-sig') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDNAMES,
+                                        delimiter=';',
+                                        quoting=csv.QUOTE_NONE)
+                writer.writeheader()
+                writer.writerows(all_csv_rows)
+            
+            print(f"File consolidato creato: {csv_filename}")
         
         conversion_time = time.time() - job_start_time
         
-        print(f"File consolidato creato: {csv_filename}")
         print(f"File processati: {processed_files}/{len(xml_files)}")
         print(f"Righe totali: {total_rows}")
         print(f"Tempo totale: {conversion_time:.3f}s")
@@ -248,7 +292,7 @@ def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path):
                         job_ts, conversion_time, 0, error_msg)
 
 
-def process_input(input_path, output_folder, onefile=False):
+def process_input(input_path, output_folder, onefile=False, split_rows=None):
     Path(output_folder).mkdir(parents=True, exist_ok=True)
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -264,7 +308,7 @@ def process_input(input_path, output_folder, onefile=False):
         
         if onefile:
             convert_xml_to_csv_onefile([input_path], output_folder,
-                                       log_file_path)
+                                       log_file_path, split_rows)
         else:
             convert_xml_to_csv(input_path, output_folder, log_file_path)
         
@@ -278,7 +322,8 @@ def process_input(input_path, output_folder, onefile=False):
         print(f"Trovati {len(xml_files)} file XML da convertire")
         
         if onefile:
-            convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path)
+            convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
+                                       split_rows)
         else:
             for i, xml_file in enumerate(xml_files, 1):
                 print(f"Convertendo {i}/{len(xml_files)}: "
@@ -301,6 +346,7 @@ Esempi:
   python xml_to_csv_converter.py -f cartella_xml/             # Cartella
   python xml_to_csv_converter.py -f cartella_xml/ -o output/  # Con output
   python xml_to_csv_converter.py -f cartella_xml/ -1          # Un solo file
+  python xml_to_csv_converter.py -f cartella_xml/ -1 -s 100000   # Split
         """
     )
     
@@ -330,11 +376,30 @@ Esempi:
         help='Crea un unico file CSV consolidato con tutti i dati'
     )
     
+    parser.add_argument(
+        '-s', '--split-csv',
+        type=int,
+        dest='split_rows',
+        metavar='RIGHE',
+        help='Divide il file consolidato in chunk di RIGHE righe '
+             '(default: 500000, usa solo con --onefile)'
+    )
+    
     if len(sys.argv) == 1:
         parser.print_help()
         return
     
     args = parser.parse_args()
+    
+    # Validazione: split-csv richiede onefile
+    if args.split_rows and not args.onefile:
+        print("ERRORE: L'opzione --split-csv può essere usata solo "
+              "con --onefile")
+        return
+    
+    # Se onefile è specificato senza split-csv, usa default 500000
+    if args.onefile and args.split_rows is None:
+        args.split_rows = 500000
     
     if args.file_xml:
         input_path = args.file_xml
@@ -359,7 +424,7 @@ Esempi:
         else:
             output_folder = input_path
     
-    process_input(input_path, output_folder, args.onefile)
+    process_input(input_path, output_folder, args.onefile, args.split_rows)
     print("Conversione completata!")
 
 
