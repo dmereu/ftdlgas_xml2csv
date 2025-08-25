@@ -1,10 +1,8 @@
-# 🔥 Gas Attivo/Passivo XML to CSV Converter
+# 🔥 Convertitore avanzato da XML a CSV per fatture DL Gas
 
 ![Python](https://img.shields.io/badge/python-3.7%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.1.3-orange)
-
-Convertitore avanzato per file XML delle fatture gas in formato CSV con funzionalità enterprise per la gestione di grandi volumi di dati.
+![Version](https://img.shields.io/badge/version-0.1.4-orange)
 
 ## 📋 Caratteristiche
 
@@ -58,6 +56,7 @@ python xml2csv.py [OPTIONS] [FILE_XML]
 | `-1, --onefile`         | Crea un unico file CSV consolidato                          |
 | `-s, --split-csv RIGHE` | Divide il file consolidato ogni N righe (default: 500.000)  |
 | `-g, --grep TERMINI`    | Filtra le righe contenenti i termini specificati (OR logic) |
+| `-r, --recursive`       | Cerca file XML ricorsivamente nelle sottocartelle           |
 | `-h, --help`            | Mostra l'aiuto                                              |
 
 ## 📋 Esempi di Utilizzo
@@ -80,6 +79,19 @@ python xml2csv.py -f cartella_xml/
 
 # Con output personalizzato
 python xml2csv.py -f cartella_xml/ -o csv_output/
+```
+
+### 🔄 Ricerca Ricorsiva
+
+```bash
+# Cerca file XML anche nelle sottocartelle
+python xml2csv.py -f cartella_xml/ -r
+
+# Ricorsiva con output specifico
+python xml2csv.py -f cartella_xml/ -o csv_output/ -r
+
+# Combina ricorsiva con file consolidato
+python xml2csv.py -f cartella_xml/ -r -1
 ```
 
 ### 🎯 File Consolidato
@@ -116,6 +128,12 @@ python xml2csv.py -f cartella_xml/ -g "TAU1_DIS,TAU3_DIS"
 
 # Filtro combinato con altre opzioni
 python xml2csv.py -f cartella_xml/ -1 -g "TAU1" -s 100000
+
+# Filtro con ricerca ricorsiva
+python xml2csv.py -f cartella_xml/ -r -g "TAU1"
+
+# Combinazione completa: ricorsivo, consolidato, filtrato e split
+python xml2csv.py -f cartella_xml/ -r -1 -g "TAU1_DIS" -s 250000
 ```
 
 ## 📊 Campi Estratti
@@ -179,6 +197,7 @@ Trovati 110 file XML da convertire
 Processando 1/110: fattura_001.xml
 Processando 2/110: fattura_002.xml
 ...
+Trovati 350 file XML da convertire (ricerca ricorsiva)
 Filtro attivo: 'TAU1_DIS,TAU3_DIS'
 Filtrate: 9036/49320 righe (18.36%)
 File consolidato creato: xml_multi_20250825-143022.csv
@@ -279,6 +298,14 @@ Per debug avanzato, verificare i log nella cartella `xml2csv_logs/`
 Questo progetto è distribuito sotto licenza MIT. Vedi il file `LICENSE` per dettagli.
 
 ## 🏆 Changelog
+
+### v0.1.4 (2025-08-25)
+
+- 🔄 **NEW**: Aggiunta opzione `--recursive` per ricerca ricorsiva nelle sottocartelle
+- 📁 Esplorazione automatica di tutte le sottocartelle con `-r`
+- 🎯 Compatibilità ricerca ricorsiva con tutte le modalità (consolidato, split, filtro)
+- 📊 Indicatore progress specifico per ricerca ricorsiva
+- ⚡ Utilizzo ottimizzato di `glob.glob()` con pattern `**/*.xml`
 
 ### v0.1.3 (2025-08-25)
 

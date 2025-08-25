@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Converte file XML delle fatture gas in formato CSV usando solo librerie standard.
-Versione: 0.1.3
-Build: 20250825-1234
+Versione: 0.1.4
+Build: 20250825-1600
 """
 
 import xml.etree.ElementTree as ET
@@ -17,6 +17,8 @@ import time
 
 
 # Costanti globali
+DEFAULT_OUTPUT_FOLDER = "xml2csv_output"
+
 CSV_FIELDNAMES = [
     'nome_file', 'data_creazione', 'numero_sequenza',
     'mittente_ragione_sociale', 'mittente_partita_iva',
@@ -81,6 +83,19 @@ def is_valid_xml_file(file_path):
     """Verifica se il file è un XML valido"""
     return (file_path and file_path.lower().endswith('.xml') and
             os.path.isfile(file_path))
+
+
+def find_xml_files(input_path, recursive=False):
+    """Trova tutti i file XML nella cartella, opzionalmente in modo ricorsivo"""
+    if recursive:
+        # Ricerca ricorsiva usando **/*.xml
+        xml_files = glob.glob(os.path.join(input_path, "**", "*.xml"), 
+                             recursive=True)
+    else:
+        # Ricerca solo nella cartella principale
+        xml_files = glob.glob(os.path.join(input_path, "*.xml"))
+    
+    return sorted(xml_files)
 
 
 def get_text_safe(element, tag_name):
@@ -338,7 +353,7 @@ def convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
 
 
 def process_input(input_path, output_folder, onefile=False, split_rows=None,
-                  grep_filter=None):
+                  grep_filter=None, recursive=False):
     Path(output_folder).mkdir(parents=True, exist_ok=True)
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -363,13 +378,15 @@ def process_input(input_path, output_folder, onefile=False, split_rows=None,
                                suppress_print=False, grep_filter=grep_filter)
         
     elif os.path.isdir(input_path):
-        xml_files = glob.glob(os.path.join(input_path, "*.xml"))
+        xml_files = find_xml_files(input_path, recursive)
         
         if not xml_files:
-            print(f"Nessun file XML trovato in: {input_path}")
+            search_type = "ricorsivamente" if recursive else ""
+            print(f"Nessun file XML trovato {search_type} in: {input_path}")
             return
         
-        print(f"Trovati {len(xml_files)} file XML da convertire")
+        search_info = " (ricerca ricorsiva)" if recursive else ""
+        print(f"Trovati {len(xml_files)} file XML da convertire{search_info}")
         
         if onefile:
             convert_xml_to_csv_onefile(xml_files, output_folder, log_file_path,
@@ -392,14 +409,15 @@ def main():
         description='Converte file XML delle fatture gas in formato CSV',
         epilog="""
 Esempi:
-  python xml_to_csv_converter.py file.xml                     # Singolo file
-  python xml_to_csv_converter.py file.xml -o output/          # Con output
-  python xml_to_csv_converter.py -f cartella_xml/             # Cartella
-  python xml_to_csv_converter.py -f cartella_xml/ -o output/  # Con output
-  python xml_to_csv_converter.py -f cartella_xml/ -1          # Un solo file
-  python xml_to_csv_converter.py -f cartella_xml/ -1 -s 100000   # Split
-  python xml_to_csv_converter.py -f cartella_xml/ -g "TAU1"   # Filtra TAU1
-  python xml_to_csv_converter.py -f cartella_xml/ -g "TAU1,TAU2" # OR logic
+  python xml2csv.py file.xml                               # Singolo file
+  python xml2csv.py file.xml -o output/                    # Con output
+  python xml2csv.py -f cartella_xml/                       # Cartella
+  python xml2csv.py -f cartella_xml/ -o output/            # Con output
+  python xml2csv.py -f cartella_xml/ -r                    # Ricerca ricorsiva
+  python xml2csv.py -f cartella_xml/ -1                    # Un solo file
+  python xml2csv.py -f cartella_xml/ -1 -s 100000          # Split
+  python xml2csv.py -f cartella_xml/ -g "TAU1"             # Filtra TAU1
+  python xml2csv.py -f cartella_xml/ -g "TAU1,TAU2" -r     # OR logic + ricorsivo
         """
     )
     
@@ -420,7 +438,7 @@ Esempi:
     parser.add_argument(
         '-o', '--output',
         dest='output_folder',
-        help='Cartella di output (default: stessa cartella dell\'input)'
+        help=f'Cartella di output (default: {DEFAULT_OUTPUT_FOLDER})'
     )
     
     parser.add_argument(
@@ -444,6 +462,12 @@ Esempi:
         metavar='FILTRO',
         help='Filtra le righe che contengono FILTRO (case-insensitive). '
              'Usa virgole per filtri multipli (OR): "testo1,testo2"'
+    )
+    
+    parser.add_argument(
+        '-r', '--recursive',
+        action='store_true',
+        help='Cerca file XML ricorsivamente nelle sottocartelle'
     )
     
     if len(sys.argv) == 1:
@@ -480,13 +504,11 @@ Esempi:
     if args.output_folder:
         output_folder = args.output_folder
     else:
-        if args.file_xml:
-            output_folder = os.path.dirname(input_path)
-        else:
-            output_folder = input_path
+        # Usa sempre la cartella di default per l'output
+        output_folder = DEFAULT_OUTPUT_FOLDER
     
     process_input(input_path, output_folder, args.onefile, args.split_rows,
-                  args.grep_filter)
+                  args.grep_filter, args.recursive)
     print("Conversione completata!")
 
 
